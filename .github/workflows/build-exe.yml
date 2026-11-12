@@ -1,0 +1,51 @@
+name: Build ACC-Analyzer.exe
+
+on:
+  workflow_dispatch:      # manuell starten: Actions -> Build ACC-Analyzer.exe -> Run workflow
+  push:
+    branches: [main, master]
+    tags: ["v*"]          # Tag v1.0.0 pushen -> zusätzlich GitHub-Release mit der .exe
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write     # nötig, um bei Tags das Release anzulegen
+    env:
+      PYTHONUTF8: "1"           # Konsole/Pipe auf dem Runner ist sonst cp1252
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Abhängigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas matplotlib markdown pyinstaller pytest
+      - name: Tests (Beispielaufnahme ist nicht im Repo -> diese Tests werden übersprungen)
+        run: python -m pytest tests -q
+      - name: GUI-Modul importierbar (tkinter vorhanden)
+        run: python -c "import accanalyzer.gui"
+      - name: .exe bauen
+        run: python build_exe.py
+      - name: .exe starten (Fenster muss nach 15 s noch laufen = kein Absturz beim Start)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\ACC-Analyzer.exe -PassThru
+          Start-Sleep -Seconds 15
+          $alive = Get-Process -Name ACC-Analyzer -ErrorAction SilentlyContinue
+          Get-Process -Name ACC-Analyzer -ErrorAction SilentlyContinue | Stop-Process -Force
+          "Größe: {0:N1} MB" -f ((Get-Item dist\ACC-Analyzer.exe).Length / 1MB)
+          if (-not $alive) { Write-Error "ACC-Analyzer.exe ist beim Start beendet worden"; exit 1 }
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ACC-Analyzer-windows
+          path: dist/ACC-Analyzer.exe
+      - name: GitHub-Release mit der .exe (nur bei Tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ACC-Analyzer.exe
+          generate_release_notes: true

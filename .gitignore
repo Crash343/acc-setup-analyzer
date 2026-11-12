@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.spec
+.pytest_cache/
+demo_out/
+ci_demo/
+
+# Beispielaufnahmen: .ld-Dateien sind groß (>100 MB, GitHub lehnt sie ab) -> nur lokal
+exmaple_files_for_testings/*.ld
+
+# Persönliche Notizen (nur lokal)
+ideen.txt
