@@ -39,13 +39,13 @@ jobs:
           Get-Process -Name ACC-Analyzer -ErrorAction SilentlyContinue | Stop-Process -Force
           "Größe: {0:N1} MB" -f ((Get-Item dist\ACC-Analyzer.exe).Length / 1MB)
           if (-not $alive) { Write-Error "ACC-Analyzer.exe ist beim Start beendet worden"; exit 1 }
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: ACC-Analyzer-windows
           path: dist/ACC-Analyzer.exe
       - name: GitHub-Release mit der .exe (nur bei Tags v*)
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/ACC-Analyzer.exe
           generate_release_notes: true

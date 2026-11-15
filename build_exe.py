@@ -13,6 +13,7 @@ pi.run([
     "--collect-submodules", "markdown",
     "--collect-submodules", "accanalyzer",
     "--hidden-import", "matplotlib.backends.backend_agg",
+    "--hidden-import", "matplotlib.backends.backend_tkagg",
     "--exclude-module", "PyQt5", "--exclude-module", "PyQt6", "--exclude-module", "PySide6",
     "--exclude-module", "IPython", "--exclude-module", "pytest", "--exclude-module", "scipy",
 ])

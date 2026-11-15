@@ -4,6 +4,8 @@ Das MoTeC-File enthält weder Luft-/Asphalttemperatur noch Session-Art oder -Lä
 alle paar Sekunden eine Zeile in  Dokumente\\ACC-Analyse\\live\\live_JJJJ-MM-TT.jsonl:
     Uhrzeit, Session-Art (Training/Quali/Rennen), Restzeit, Luft, Asphalt, Auto, Strecke, Sprit.
 Bei der Auswertung werden diese Zeilen über die Uhrzeit den Sessions der .ld-Aufnahme zugeordnet.
+
+Außerdem puffert der Thread die laufende Session mit ca. 25 Hz für die Live-Auswertung (siehe livesession.py).
 """
 from __future__ import annotations
 
@@ -34,55 +36,79 @@ def live_dir() -> Path:
 
 
 class LiveLogger(threading.Thread):
-    """Hintergrund-Thread: wartet auf ACC und schreibt während einer Session alle `interval` s eine Zeile."""
+    """Hintergrund-Thread: liest ACC mit `hz` Hz in den Live-Puffer (recorder) und schreibt alle `interval` s eine
+    Zeile in den Mitschnitt (Luft, Asphalt, Session-Art, Restzeit, Sprit)."""
 
-    def __init__(self, folder: Path | None = None, interval: float = 5.0):
+    FROZEN_S = 30.0   # so lange keine neuen Daten -> ACC beendet/Pause: Fläche freigeben und neu warten
+
+    def __init__(self, folder: Path | None = None, interval: float = 5.0, hz: float = 25.0):
         super().__init__(daemon=True)
+        from .livesession import Recorder
         self.folder = Path(folder or live_dir())
         self.interval = interval
+        self.hz = hz
+        self.recorder = Recorder()
+        from .livebalance import BalanceMonitor, load_settings
+        self.monitor = BalanceMonitor(load_settings())
         self.state = "Live-Mitschnitt: warte auf ACC …"
         self.count = 0
         self._stop = threading.Event()
 
     def stop(self):
         self._stop.set()
+        self.monitor.stop()
 
     def run(self):
         from .shm import ACCReader, wstr
-        reader, last_ids, frozen, stale = None, None, 0, None
+        reader, last_ids, stale = None, None, None
+        self.monitor.start_sound()
+        changed_at, written_at, state_at = time.time(), 0.0, 0.0
         while not self._stop.is_set():
+            now = time.time()
             try:
                 if reader is None:
                     reader = ACCReader()
-                    last_ids, frozen = None, 0
+                    last_ids, changed_at = None, now
                 p, g, s = reader.read()
                 ids = (p.packetId, g.packetId)
-                frozen = frozen + 1 if ids == last_ids else 0
+                fresh = ids != last_ids
+                if fresh:
+                    changed_at = now
                 last_ids = ids
                 if ids == stale:         # immer noch derselbe eingefrorene Stand -> nichts schreiben
                     self.state = "Live-Mitschnitt: ACC inaktiv – warte …"
-                elif frozen >= 6:        # nichts mehr aktualisiert (ACC beendet/Pause) -> Fläche freigeben, neu warten
+                elif now - changed_at > self.FROZEN_S:   # nichts mehr aktualisiert -> Fläche freigeben, neu warten
                     stale = ids
                     reader.close()
                     reader = None
                     self.state = "Live-Mitschnitt: ACC inaktiv – warte …"
-                elif g.status == 2 and frozen == 0:   # 2 = AC_LIVE (nicht Replay/Pause)
-                    rec = dict(ts=round(time.time(), 1), session=int(g.session), left=round(g.sessionTimeLeft / 1000.0, 1),
-                               air=round(p.airTemp, 1), road=round(p.roadTemp, 1), car=wstr(s.carModel), track=wstr(s.track),
-                               fuel=round(p.fuel, 1), pit=int(g.isInPit))
-                    self._write(rec)
-                    left = f", noch {rec['left'] / 60:.0f} min" if rec["left"] > 0 else ""
-                    self.state = (f"● Live: {SESSION_TYPES.get(rec['session'], '?')}{left} · Luft {rec['air']:.0f} °C · "
-                                  f"Asphalt {rec['road']:.0f} °C ({self.count} Werte)")
-                else:
+                elif g.status == 2 and fresh:   # 2 = AC_LIVE (nicht Replay/Pause)
+                    car, track = wstr(s.carModel), wstr(s.track)
+                    self.recorder.add(p, g, s, now, car, track)
+                    self.monitor.update(p, g, now)
+                    if now - written_at >= self.interval:
+                        written_at = now
+                        rec = dict(ts=round(now, 1), session=int(g.session), left=round(g.sessionTimeLeft / 1000.0, 1),
+                                   air=round(p.airTemp, 1), road=round(p.roadTemp, 1), car=car, track=track,
+                                   fuel=round(p.fuel, 1), pit=int(g.isInPit))
+                        self._write(rec)
+                    if now - state_at >= 1.0:
+                        state_at = now
+                        left = g.sessionTimeLeft / 60000.0
+                        lt = f", noch {left:.0f} min" if left > 0 else ""
+                        self.state = (f"● Live: {SESSION_TYPES.get(int(g.session), '?')}{lt} · {self.recorder.laps_done} Runden · "
+                                      f"Luft {p.airTemp:.0f} °C · Asphalt {p.roadTemp:.0f} °C")
+                elif g.status != 2:
                     self.state = "Live-Mitschnitt: ACC läuft – warte auf Session …"
             except RuntimeError:
                 reader = None
                 self.state = "Live-Mitschnitt: warte auf ACC …"
             except Exception as e:  # nie das Fenster abschießen
+                if reader is not None:
+                    reader.close()
                 reader = None
                 self.state = f"Live-Mitschnitt: Fehler ({e})"
-            self._stop.wait(self.interval)
+            self._stop.wait(1.0 / self.hz if reader is not None else 2.0)
         if reader is not None:
             reader.close()
 

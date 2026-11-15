@@ -28,7 +28,13 @@
   Jede Runde bekommt einen Typ (Start, Outlap, gezeitet, Box/Stopp, Inlap). Nur saubere Runden fließen in die Werte ein.
 - **Rennen und Quali getrennt auswerten.** Jede Session ist als Rennen, Quali oder „nicht auswerten“ einstellbar.
 - **Reifendruck pro Rad.** Die Draufsicht aufs Auto zeigt, welches Rad wie viele Clicks rauf oder runter braucht.
-- **Weitere Empfehlungen.** Bremsbalance, Balance (Unter-/Übersteuern), Traktion, Fahrwerk/Bumpstops, Bremsbelüftung und Rundenzeit-Verluste.
+- **Unter-/Übersteuern je Kurve.** Für jede Kurve getrennt nach Eingang, Mitte und Ausgang. Zeigt sich ein Muster über mehrere Kurven
+  (z. B. nur in schnellen Kurven), gibt es das passende Setup-Paket dazu.
+- **Live-Auswertung ohne MoTeC-File.** Schon während der Session, nach jeder Runde: ideal, um auf einer neuen Strecke mit dem
+  Aggressive-Preset ein Setup zu erarbeiten.
+- **Vergleich mit einer Referenzrunde.** Deine Runde gegen die Hotlap z. B. eines Esport-Fahrers:
+  Zeitverlust je Kurve mit Begründung (Bremspunkt, Kurvenminimum, Vollgas, Lenkeinschlag), Diagramme und Setup-Unterschiede.
+- **Weitere Empfehlungen.** Bremsbalance, Traktion, Fahrwerk/Bumpstops, Bremsbelüftung und Rundenzeit-Verluste.
 - **Fertige Setup-Dateien.** Je Auswertung entsteht eine neue ACC-Setup-Datei, Name z. B. `20C_24C_39F.json` (Luft °C, Asphalt °C, Liter).
   Dein Original bleibt unverändert.
     - **Rennen**: Sprit für die Renndauer.
@@ -63,6 +69,8 @@ Stell im Setup unter **Electronics → Telemetry Laps** die Anzahl Runden ein, z
    Danach je Variante **… speichern**. Vorgeschlagen wird der Ordner deines Setups, so taucht die Datei in ACC direkt in der Setup-Liste auf.
 6. **Weitere Reiter:** **Übersicht** vergleicht Rennen und Quali. **Runden** listet jede Runde mit Typ, Zeit, Druck und Temperatur.
    *Ausführlichen Report im Browser öffnen* zeigt den HTML-Report, er liegt in `Dokumente\ACC-Analyse`.
+7. **Reiter 🔴 Live:** die Auswertung der Session, die du gerade fährst (siehe unten). Dafür braucht es keine Aufnahme.
+8. **Reiter ⚖ Vergleich:** deine Runde gegen eine Referenzrunde (siehe unten).
 
 **Drag & Drop:** Du kannst eine `.ld` (und optional die Setup-`.json`) auf `ACC-Analyzer.exe` ziehen. Das Fenster öffnet sich dann mit diesen Dateien.
 
@@ -78,6 +86,50 @@ Unten rechts steht dann z. B. *● Live: Quali, noch 12 min · Luft 19 °C · As
 - Das Fenster darf schon vor ACC offen sein. Es liest nur und verändert nichts an ACC.
 - **Ohne Mitschnitt wird nichts geschätzt.** Die Felder bleiben dann leer, bis du die Werte selbst einträgst.
   Bis dahin bleibt der Sprit für *Rennen* und *Quali voll* unverändert. Die Datei heißt dann `<Original>_rennen.json` usw. statt `20C_24C_39F.json`.
+
+## Live-Auswertung: Setup erarbeiten, bevor das MoTeC-File da ist
+
+Solange der Live-Mitschnitt läuft, puffert das Fenster die aktuelle Session mit ca. 25 Werten pro Sekunde. Ab der 2. abgeschlossenen
+Runde wertet der Reiter **🔴 Live** nach jeder Runde automatisch aus: Druck pro Rad, Temperaturen, Unter-/Übersteuern je Kurve und Setup-Vorschläge.
+
+**Neue Strecke, noch kein Setup:**
+
+1. In ACC das Preset **Aggressive** laden und 3–5 saubere Runden am Stück fahren.
+2. Im Reiter **🔴 Live** die Empfehlungen ansehen. Die 1. Runde nach der Box zählt beim Druck nicht, weil die Reifen da noch kalt sind.
+3. Das Preset in ACC im Setup-Menü unter eigenem Namen speichern. Im Reiter **🔴 Live** dann *Neuestes Setup verwenden* klicken
+   (nimmt die zuletzt gespeicherte Datei im Ordner von Auto und Strecke) oder *Setup-Datei wählen*.
+   Dann das angepasste Setup speichern (Name wie gewohnt `Luft_Asphalt_Liter`), in ACC laden und weiterfahren.
+
+- **Töne beim Fahren:** Während du fährst, piept es bei Unter- oder Übersteuern. Ein tiefer Ton bedeutet Untersteuern, ein hoher Übersteuern.
+  Je stärker das Auto unter- oder übersteuert, desto schneller folgen die Töne, ähnlich wie bei einer Einparkhilfe.
+  Oben im Live-Reiter stehen Zähler wie bei ACC Race Engineer: langsam/schnell (Grenze 100 km/h) × Bremsen/Rollen/Gas.
+  Dort lassen sich auch die Schwellen in Grad Schräglauf (vorne − hinten) einstellen, die Töne testen und abschalten.
+  Die Einstellungen werden in `Dokumente\ACC-Analyse\einstellungen.json` gespeichert.
+- Ausgewertet wird als *Rennen* (Stint-Logik) oder in einer Quali-Session als *Quali*. Oben im Reiter lässt sich das umstellen.
+- Live liefert ACC zusätzlich den **Schräglaufwinkel jedes Rads**. Damit ist die Unter-/Übersteuern-Erkennung genauer als aus dem MoTeC-File.
+- Die Daten bleiben nur im Speicher. Eine neue Session (oder ein Neustart) beginnt von vorn. Der Report landet als `Live_<Strecke>_<Auto>_<Zeit>_report.html` in `Dokumente\ACC-Analyse`.
+
+## Vergleich mit einer Referenzrunde
+
+Wo verlierst du gegenüber einer schnelleren Runde Zeit, und warum?
+
+1. Eine Referenz-Aufnahme (`.ld`, die `.ldx` ist optional; auch der Export einer einzelnen Runde geht) für **dasselbe Auto und dieselbe Strecke** in `Dokumente\ACC-Analyse\Referenz` legen.
+   Unterordner sind erlaubt. Eine Setup-`.json` mit gleichem Namen (oder als einzige im Ordner) wird mitverglichen.
+   Der Knopf *Referenz-Ordner öffnen* legt den Ordner an.
+2. Deine eigene Aufnahme wie gewohnt laden.
+3. Im Reiter **⚖ Vergleich** die Referenz wählen. Verglichen wird jeweils die schnellste gültige Runde. Beide Runden lassen sich umstellen.
+
+- **Wo du verlierst:** Δ-Zeit über die Runde und Zeitverlust je Kurve (Kurve mit Bremszone bis zur nächsten Kurve).
+  Die drei größten Verluste stehen oben mit Begründung, z. B. *K7: +0,32 s, bremst 18 m früher, Kurvenminimum 6 km/h langsamer*.
+- **Tabelle:** Bremspunkt, Kurvenminimum und Vollgas-Punkt, jeweils deins / Referenz. Ein Klick auf eine Kurve zoomt die Diagramme dorthin.
+- **Diagramme:** Δ-Zeit, Geschwindigkeit, Gas, Bremse und Lenkung über die Strecke, mit Zoom und Verschieben.
+- **Streckenkarte:** rechts neben den Diagrammen. Die drei Abschnitte mit dem größten Zeitverlust sind rot, orange und gelb eingefärbt.
+  Ein Klick auf die Karte zeigt die Kurve in Tabelle und Diagrammen. Der Knopf *🗺 Karte groß* öffnet sie in einem eigenen Fenster (mit Zoom). Die Form wird aus Gierrate und Tempo berechnet,
+  weil das MoTeC-File keine GPS-Daten enthält. Sie ist deshalb nicht maßstabsgetreu, aber gut wiedererkennbar.
+- **Setup:** Liegt eine Referenz-Setup-Datei bei und hast du dein Setup gewählt, erscheinen alle unterschiedlichen Werte (Clicks).
+
+Referenz-Dateien von Coaching-Seiten (Coach Dave, VRS, Track Titan …) bitte nur für dich verwenden und nicht weitergeben.
+Viele stehen unter Nutzungsbedingungen. Das Tool lädt nichts selbst herunter.
 
 ## Die Setup-Dateien
 
@@ -130,6 +182,20 @@ Unten rechts steht dann z. B. *● Live: Quali, noch 12 min · Luft 19 °C · As
 - **Toleranz:** Druckabweichungen bis ±0,1 psi gelten als „passt“. 1 Click = 0,1 psi.
 </details>
 
+<details>
+<summary><b>Unter-/Übersteuern je Kurve</b></summary>
+
+- **Kurven:** Streckenstücke, in denen die mittlere Querbeschleunigung über die gültigen Runden über 0,7 g liegt, plus die Bremszone davor.
+  Sie werden ab Start/Ziel als K1, K2 … nummeriert (nicht die offiziellen Kurvennummern). Dazu kommen Position in % der Runde und langsamste Stelle.
+- **Phasen:** Eingang (auf der Bremse), Mitte (weder Gas noch Bremse), Ausgang (am Gas nach dem Scheitel).
+- **Messgrößen:**
+    - Live: Schräglauf vorne minus hinten. Vorne mehr bedeutet Untersteuern.
+    - Aus MoTeC: Lenkreaktion (Gierrate pro Lenkwinkel) im Vergleich zur Fahrt mit wenig Querbeschleunigung, dazu Gegenlenken.
+- **Setup-Vorschlag** nur bei einem Muster:
+    - Untersteuern oder Übersteuern in mindestens der Hälfte der schnellen Kurven (≥ 170 km/h) führt zum Aero-Paket (Heckflügel/Fahrhöhe).
+    - Dieselbe Phase in mindestens 40 % der langsamen und mittleren Kurven führt zum mechanischen Paket (Bremsbalance, Stabi, Federn, Preload).
+</details>
+
 ## Grenzen
 
 - **Nur GT3:** Zielwerte (Heißdruck 26,8 psi, Reifen- und Bremsentemperaturfenster) und Click-Richtungen sind auf ACC-GT3 abgestimmt.
@@ -137,7 +203,10 @@ Unten rechts steht dann z. B. *● Live: Quali, noch 12 min · Luft 19 °C · As
 - **Schwellwerte sind Annahmen.** Druckfenster, Temperaturen und Balance-Schwellen sind an echten Sessions plausibilisiert,
   aber nicht gegen ein „perfektes“ Setup kalibriert. Teste pro Fahrt nur 1–2 Änderungen.
 - **Reifentemperatur:** Der MoTeC-Export hat nur einen Wert pro Rad, keine Innen/Mitte/Außen-Werte. Deshalb gibt es keine Sturz-Empfehlung aus Temperaturen.
-- **Balance:** Unter- und Übersteuern werden aus Lenkreaktion, Gegenlenken und Raddrehzahlen abgeleitet. Schlupfwinkel exportiert ACC nicht.
+- **Balance:** Aus dem MoTeC-File werden Unter- und Übersteuern aus Lenkreaktion, Gegenlenken und Raddrehzahlen abgeleitet,
+  Schräglaufwinkel exportiert ACC dort nicht. Einzelne Kurven sind deshalb mit Vorsicht zu lesen. Mit der Live-Auswertung kommen die Schräglaufwinkel dazu.
+- **Live-Auswertung:** Die Schwellen für den Schräglauf (vorne − hinten > 1° = Untersteuern, < −0,5° = Übersteuern) sind noch nicht an echten
+  Live-Sessions kalibriert. Sie stehen als `SA_US`/`SA_OS` in `analysis.py`.
 - **Click-Richtungen:** Prüf sie im Garage-Screen kurz nach.
 - **Datenmenge:** Bei nur 1 gültigen Runde sind die Reifenwerte unsicher. Am besten 3 oder mehr saubere Runden fahren.
 - **Getestet** mit echten Aufnahmen: AMR V8 Vantage und McLaren 720S Evo in Barcelona, am Nürburgring und in Silverstone.
@@ -158,7 +227,11 @@ python tools/make_icon.py         # Programm-Icon neu zeichnen
     - `ldimport.py`: MoTeC lesen, Sessions und Runden erkennen.
     - `analysis.py`: Befunde und Empfehlungen.
     - `setupio.py`: Setup lesen, ändern, im ACC-Format schreiben.
-    - `livelog.py`: Live-Mitschnitt.
+    - `livelog.py`: Live-Mitschnitt (Thread, liest ACC mit 25 Hz).
+    - `compare.py`: Vergleich mit einer Referenzrunde.
+    - `livebalance.py`: Unter-/Übersteuern in Echtzeit mit Warnton.
+    - `livesession.py`: Puffer der laufenden Session und Umbau ins Analyse-Format (Live-Auswertung).
+    - `shm.py`: ACC Shared Memory (nur lesen).
     - `report.py`: Markdown/HTML und Diagramme.
     - `gui.py`: das Fenster.
 

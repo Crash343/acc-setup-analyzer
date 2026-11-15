@@ -142,6 +142,7 @@ def _mode_section(mode: str, res: Result, setup_log, multi: bool) -> list[str]:
             L.append("_Quali: alle gezeiteten Runden zählen (die Outlap wärmt die Reifen an). Wenige Runden → Werte mit Vorsicht._\n")
     L += _pressure_grid(st.get("pressure"), h)
     L += _temps_block(st.get("temps"), h)
+    L += corner_table(st.get("corners"), h)
 
     todo = [f for f in res.findings if f.level == "action"]
     L.append(f"{h} Empfehlungen{' ' + mode_title(mode) if multi else ''} (Reihenfolge nach Wichtigkeit)")
@@ -161,6 +162,27 @@ def _mode_section(mode: str, res: Result, setup_log, multi: bool) -> list[str]:
     for f in sorted(res.findings, key=lambda f: ORDER[f.level]):
         L.append(f"- {ICON[f.level]} **[{f.area}] {f.title}** – {f.detail}")
     L.append("")
+    return L
+
+
+def corner_table(corners: list | None, h: str = "##") -> list[str]:
+    """Unter-/Übersteuern je Kurve und Phase (Median über die gültigen Runden)."""
+    if not corners:
+        return []
+    from .analysis import PHASE_DE, verdict_text
+
+    def cell(p):
+        t = verdict_text(p)
+        return t if t in ("–", "neutral") else f"**{'🔵' if p['verdict'] == 'us' else '🔴'} {t}**"
+    L = [f"{h} Balance je Kurve",
+         "| Kurve | Position | langsamste Stelle | " + " | ".join(PHASE_DE.values()) + " |",
+         "|---|---|---|---|---|---|"]
+    for c in corners:
+        L.append(f"| K{c['no']} | {c['apex'] * 100:.0f} % der Runde | {c['vmin']:.0f} km/h ({c['cls']}) | "
+                 + " | ".join(cell(c["phases"].get(k)) for k in PHASE_DE) + " |")
+    L.append("\n_🔵 Untersteuern (Auto schiebt über die Vorderräder), 🔴 Übersteuern (Heck kommt). Kurven K1, K2 … ab Start/Ziel "
+             "durchnummeriert (nicht die offiziellen Kurvennummern). Mit Live-Aufnahme zählt der Schräglauf vorne/hinten, "
+             "aus MoTeC nur Lenkwinkel/Gierrate – dort Einzelwerte mit Vorsicht._\n")
     return L
 
 

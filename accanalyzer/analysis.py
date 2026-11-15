@@ -415,13 +415,19 @@ def analyze_traction(df, laps) -> list:
     return [Finding("Traktion", "ok", "Traktion unauffällig", d)]
 
 
-def analyze_balance(df, laps, tg) -> list:
+def _sa_diff(sub) -> float:
+    """Schräglauf vorne minus hinten (Grad, Beträge). > 0: Vorderachse rutscht mehr (Untersteuern)."""
+    return float(sub[["sa_fl", "sa_fr"]].abs().mean().mean() - sub[["sa_rl", "sa_rr"]].abs().mean().mean())
+
+
+def analyze_balance(df, laps, tg, stats_out: dict | None = None) -> list:
     valid = laps[laps.valid]
     d0 = df[df.lap.isin(valid.lap) & (df.speed > 60)].copy()
     if len(d0) < 500:
         return []
     have_ws = d0[["ws_fl", "ws_fr", "ws_rl", "ws_rr"]].notna().all(axis=1).mean() > 0.5
     have_sr = d0[["sr_fl", "sr_fr", "sr_rl", "sr_rr"]].notna().all(axis=1).mean() > 0.5
+    have_sa = all(f"sa_{w}" in d0 for w in WHEELS) and d0[[f"sa_{w}" for w in WHEELS]].notna().all(axis=1).mean() > 0.5
 
     # Referenz-Lenkreaktion bei niedriger Querbeschleunigung (pro Geschwindigkeitsbin)
     steer_ref = d0.steer.abs().quantile(0.99)
@@ -430,6 +436,7 @@ def analyze_balance(df, laps, tg) -> list:
     low = d0[(d0.g_lat.abs() < 0.6) & (d0.steer.abs() > 0.05 * steer_ref) & (d0.yaw.abs() > 0.02)]
     kref = low.groupby("vbin").k.median()
     kref = kref[low.groupby("vbin").size() > 10]
+    d0["kr"] = (d0.k / d0.vbin.map(kref)).replace([np.inf, -np.inf], np.nan) if len(kref) else np.nan
 
     cornering = d0[d0.g_lat.abs() > 0.8]
     if len(cornering) < 200:
@@ -449,6 +456,12 @@ def analyze_balance(df, laps, tg) -> list:
         sub = d0[m]
         us = os_ = 0
         det = []
+        # (0) Schräglaufwinkel vorne vs. hinten – das direkteste Maß (nur Live-Aufnahme aus dem Shared Memory)
+        if have_sa:
+            dsa = _sa_diff(sub)
+            det.append(f"Schräglauf vorne−hinten = {dsa:+.1f}°")
+            us += int(dsa > SA_US) + int(dsa > 2 * SA_US)
+            os_ += int(dsa < SA_OS) + int(dsa < 3 * SA_OS)
         # (a) Schlupf-Verhältnis hinten/vorne (nur wenn wheelSlip verfügbar, d. h. Live-Aufnahme)
         if have_ws:
             front = sub[["ws_fl", "ws_fr"]].abs().mean().mean()
@@ -465,10 +478,8 @@ def analyze_balance(df, laps, tg) -> list:
             else:
                 os_ += int(dsr > 0.05)
         # (c) Lenkreaktion relativ zum Verhalten bei niedriger Querbeschleunigung
-        kr = np.nan
-        if len(kref):
-            kk = (sub.k / sub.vbin.map(kref)).replace([np.inf, -np.inf], np.nan).dropna()
-            kr = kk.median() if len(kk) > 30 else np.nan
+        kk = sub.kr.dropna()
+        kr = kk.median() if len(kk) > 30 else np.nan
         if not np.isnan(kr):
             det.append(f"Lenkreaktion vs. Referenz = {kr:.2f}")
             # Auf echten ACC-Daten liegt der neutrale Wert bei ca. 1.1 (Eingang bis ~1.3 durch Trail-Braking)
@@ -486,6 +497,176 @@ def analyze_balance(df, laps, tg) -> list:
             out.append(Finding("Balance", "ok", f"{name}: neutral", txt))
         else:
             out.append(_balance_finding(name, verdict, txt, us, os_))
+
+    corners = corner_balance(df[df.lap.isin(valid.lap)], d0, s0, have_sa)
+    if stats_out is not None:
+        stats_out["corners"] = corners
+    out += _corner_findings(corners, out)
+    return out
+
+
+# ----------------------------------------------------------------------------- Balance je Kurve
+CORNER_G = 0.7        # g – ab dieser (mittleren) Querbeschleunigung gilt ein Streckenstück als Kurve
+CORNER_BINS = 400     # Auflösung der Runde (0,25 % je Stück)
+SA_US, SA_OS = 1.0, -0.5   # Grad Schräglauf vorne−hinten: darüber Untersteuern, darunter Übersteuern
+# Lenkreaktion vs. Referenz je Phase (unter lo: Untersteuern, über hi: Übersteuern). Neutral liegt bei ≈ 1,1;
+# am Eingang dreht das Auto durch Trail-Braking ohnehin stärker ein (≈ 1,3–1,5 auf echten ACC-Daten).
+KR_LIMITS = {"entry": (0.95, 1.9), "mid": (0.85, 1.4), "exit": (0.85, 1.45)}
+PHASE_DE = {"entry": "Eingang", "mid": "Mitte", "exit": "Ausgang"}
+SPEED_CLASS = ((120, "langsam"), (170, "mittel"), (999, "schnell"))   # nach Minimalgeschwindigkeit km/h
+
+
+def _speed_class(vmin: float) -> str:
+    return next(name for lim, name in SPEED_CLASS if vmin < lim)
+
+
+def corner_runs(g: np.ndarray, br: np.ndarray) -> list[tuple[int, int, int]]:
+    """Kurven in einem Streckenprofil (gleich große Stücke einer Runde): [(Beginn Bremszone, Beginn Kurve, Ende)].
+
+    g: Querbeschleunigung je Stück, br: Bremse (0..1) je Stück. Kurve = |g| > CORNER_G, kurze Lücken mit gleichem
+    Vorzeichen werden zusammengefasst; davor wird die Bremszone (Bremse > 10 %, max. 15 Stücke) dazugenommen.
+    """
+    nb = len(g)
+    on = np.abs(g) > CORNER_G
+    runs, i = [], 0
+    while i < nb:
+        if on[i]:
+            j = i
+            while j < nb and on[j]:
+                j += 1
+            if runs and i - runs[-1][1] <= 2 and np.sign(g[i:j].mean()) == np.sign(g[runs[-1][0]:runs[-1][1]].mean()):
+                runs[-1][1] = j          # kurze Lücke in derselben Kurve -> zusammenfassen
+            else:
+                runs.append([i, j])
+            i = j
+        else:
+            i += 1
+    out = []
+    for a, e in runs:
+        if e - a < 3:
+            continue
+        a0 = a
+        while a0 > 0 and a - a0 < 15 and br[a0 - 1] > 0.1:
+            a0 -= 1
+        out.append((a0, a, e))
+    return out
+
+
+def corner_balance(dl: pd.DataFrame, d0: pd.DataFrame, s0: float, have_sa: bool) -> list[dict]:
+    """Unter-/Übersteuern je Kurve und Phase (Eingang/Mitte/Ausgang), Median über alle gültigen Runden.
+
+    dl: alle Samples der gültigen Runden (für das Streckenprofil), d0: dieselben ab 60 km/h mit Spalte kr.
+    Kurven = zusammenhängende Streckenstücke, in denen die mittlere Querbeschleunigung > CORNER_G liegt;
+    davor wird die Bremszone dazugenommen. Nummerierung K1, K2 … ab Start/Ziel (nicht die offiziellen Kurvennummern).
+    """
+    if dl.empty or "pos" not in dl:
+        return []
+    steer_ref = d0.steer.abs().quantile(0.99)
+    NB = CORNER_BINS
+    b = (dl.pos * NB).clip(0, NB - 1).astype(int)
+    prof = dl.groupby(b).agg(g=("g_lat", "median"), br=("brake", "median"), v=("speed", "median")).reindex(range(NB))
+    g = prof.g.fillna(0).values
+    out = []
+    for no, (a0, a, e) in enumerate(corner_runs(g, prof.br.fillna(0).values), 1):
+        apex = a + int(np.argmax(np.abs(g[a:e])))
+        sub = d0[(d0.pos >= a0 / NB) & (d0.pos < e / NB)]
+        if len(sub) < 20:
+            continue
+        vmin = float(np.nanmin(prof.v.values[a:e]))
+        ag = sub.g_lat.abs()
+        sub = sub[sub.steer.abs() > 0.1 * steer_ref]     # kaum Lenkeinschlag -> Lenkreaktion nicht aussagekräftig
+        ag = sub.g_lat.abs()
+        masks = {
+            "entry": (sub.brake > 0.05) & (ag > 0.5),
+            "mid": (sub.brake < 0.05) & (sub.gas < 0.5) & (ag > 0.8),
+            "exit": (sub.gas > 0.5) & (ag > 0.6) & (sub.pos >= apex / NB),
+        }
+        ph = {}
+        for key, m in masks.items():
+            s = sub[m]
+            kk = s.kr.dropna()
+            if len(kk) < 12:
+                continue
+            us = os_ = 0
+            kr = float(kk.median())
+            lo, hi = KR_LIMITS[key]
+            us += int(kr < lo) + int(kr < lo - 0.15)
+            os_ += int(kr > hi) + int(kr > hi + 0.25)
+            cs = s[s.yaw.abs() > 0.1]
+            counter = float(((np.sign(cs.steer) * np.sign(cs.yaw)) != s0).mean()) if len(cs) >= 10 else 0.0
+            os_ += int(counter > 0.25)
+            dsa = _sa_diff(s) if have_sa else None
+            if dsa is not None and dsa == dsa:
+                us += int(dsa > SA_US) + int(dsa > 2 * SA_US)
+                os_ += int(dsa < SA_OS) + int(dsa < 3 * SA_OS)
+            verdict = "us" if us > os_ else "os" if os_ > us else "neutral"
+            ph[key] = dict(verdict=verdict, score=max(us, os_), kr=kr, counter=counter, sa=dsa, n=int(len(s)))
+        if ph:
+            out.append(dict(no=no, pos0=a0 / NB, pos1=e / NB, apex=apex / NB, vmin=vmin, cls=_speed_class(vmin),
+                            phases=ph))
+    return out
+
+
+def corner_text(c: dict) -> str:
+    """'K3 (24 %, 95 km/h, langsam)'"""
+    return f"K{c['no']} ({c['apex'] * 100:.0f} %, {c['vmin']:.0f} km/h)"
+
+
+def verdict_text(p: dict | None) -> str:
+    if not p:
+        return "–"
+    if p["verdict"] == "neutral":
+        return "neutral"
+    word = "Untersteuern" if p["verdict"] == "us" else "Übersteuern"
+    return word if p["score"] >= 2 else f"leichtes {word}"
+
+
+def _corner_findings(corners: list[dict], phase_findings: list) -> list:
+    """Übersicht der auffälligen Kurven + Setup-Paket, wenn ein Muster über mehrere Kurven erkennbar ist."""
+    if not corners:
+        return []
+    out = []
+    bad = {"us": [], "os": []}
+    for c in corners:
+        for key, p in c["phases"].items():
+            if p["verdict"] in bad:
+                bad[p["verdict"]].append(f"K{c['no']} {PHASE_DE[key]} ({c['apex'] * 100:.0f} %, {c['vmin']:.0f} km/h)")
+    if not bad["us"] and not bad["os"]:
+        return [Finding("Balance", "ok", f"Alle {len(corners)} Kurven neutral",
+                        "Weder Unter- noch Übersteuern in einer einzelnen Kurve erkennbar.")]
+    det = []
+    if bad["us"]:
+        det.append("Untersteuern: " + ", ".join(bad["us"]))
+    if bad["os"]:
+        det.append("Übersteuern: " + ", ".join(bad["os"]))
+    out.append(Finding("Balance", "info", f"Balance je Kurve: {len(bad['us'])}× Untersteuern, {len(bad['os'])}× Übersteuern",
+                       "; ".join(det) + ". % = Position in der Runde ab Start/Ziel, km/h = langsamste Stelle. "
+                       "Einzelne Kurven sind oft Fahrstil (zu früh am Gas, zu spät eingelenkt) – Setup erst ändern, wenn es sich über mehrere Kurven zeigt."))
+
+    have = {f.fix for f in phase_findings if f.fix}
+    # Muster: schnelle Kurven -> Aero, sonst mechanisch je Phase
+    for verdict, fix in (("us", "fxFastUnder"), ("os", "fxFastOver")):
+        fast = [c for c in corners if c["cls"] == "schnell" and "mid" in c["phases"]]
+        hit = [c for c in fast if c["phases"]["mid"]["verdict"] == verdict]
+        slow_hit = [c for c in corners if c["cls"] != "schnell" and c["phases"].get("mid", {}).get("verdict") == verdict]
+        if len(hit) >= 2 and len(hit) >= 0.5 * len(fast) and len(slow_hit) < len(hit) and fix not in have:
+            word = "Untersteuern" if verdict == "us" else "Übersteuern"
+            out.append(Finding("Balance", "action", f"Schnelle Kurven: {word}",
+                               f"In {len(hit)} von {len(fast)} schnellen Kurven (≥ 170 km/h): " + ", ".join(corner_text(c) for c in hit)
+                               + ". In langsamen Kurven nicht – typisch für die Aero-Balance.",
+                               K.describe(fix), "mittel", fix=fix))
+            have.add(fix)
+    for key, phase in (("entry", "Kurveneingang"), ("mid", "Kurvenmitte"), ("exit", "Kurvenausgang")):
+        rel = [c for c in corners if c["cls"] != "schnell" and key in c["phases"]]
+        for verdict in ("us", "os"):
+            hit = [c for c in rel if c["phases"][key]["verdict"] == verdict]
+            fix, extra = BALANCE_FIX[(phase, verdict)]
+            if len(hit) >= 3 and len(hit) >= 0.4 * len(rel) and fix not in have:
+                word = "Untersteuern" if verdict == "us" else "Übersteuern"
+                out.append(Finding("Balance", "action", f"{phase}: {word} in mehreren Kurven",
+                                   f"In {len(hit)} von {len(rel)} langsamen/mittleren Kurven: " + ", ".join(corner_text(c) for c in hit) + ".",
+                                   K.describe(fix) + extra, "mittel" if len(hit) >= 0.6 * len(rel) else "niedrig", fix=fix))
+                have.add(fix)
     return out
 
 
@@ -643,7 +824,7 @@ def analyze(df: pd.DataFrame, meta: dict | None = None, sessions="auto", mode: s
     findings = []
     findings += analyze_tyres(df, laps, tg, clicks, meta.get("compound_last") or meta.get("compound"), tyre_stats, mode)
     findings += analyze_brakes(df, laps, tg, clicks)
-    findings += analyze_balance(df, laps, tg)
+    findings += analyze_balance(df, laps, tg, tyre_stats)
     findings += analyze_traction(df, laps)
     findings += analyze_bumpstops(df, laps)
     findings += analyze_fuel(laps)

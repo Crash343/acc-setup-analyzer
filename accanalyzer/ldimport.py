@@ -72,6 +72,8 @@ def time_resets(ch) -> list[float]:
     if "TIME" not in ch:
         return []
     f, _, x = ch["TIME"]
+    if "SPEED" in ch and len(x) / f > 1.5 * len(ch["SPEED"][2]) / ch["SPEED"][0] + 30:
+        return []   # TIME viel länger als die Kerndaten: Einzelrunden-Export, TIME stammt aus der ganzen Session
     d = np.diff(x)
     idx = np.where((d < -1.0) & (x[:-1] > 10.0))[0]
     return [float((i + 1) / f) for i in idx]
@@ -200,6 +202,17 @@ def session_info(sessions, laps, stops) -> list[dict]:
     return out
 
 
+def _single_lap_export(v, dist, stops, beacons, lap_info, ref) -> bool:
+    """Aufnahme ist eine einzelne fliegende Runde: keine gültige Runde gefunden, keine Beacons im Bereich, kein Stillstand,
+    Start und Ende in voller Fahrt (> 54 km/h), Länge 2–8 km."""
+    if any(l["valid"] for l in lap_info) or stops or len(v) < 2:
+        return False
+    if any(0 < b < len(v) / HZ - 1 for b in beacons):
+        return False
+    d = float(dist[-1])
+    return v[0] > 15 and v[-1] > 15 and 2000 < d < 8000
+
+
 def load_ld(path: str | Path) -> tuple[pd.DataFrame, dict]:
     path = Path(path)
     ch, head = read_ld(path)
@@ -253,6 +266,11 @@ def load_ld(path: str | Path) -> tuple[pd.DataFrame, dict]:
     sessions = detect_sessions(T, stops)
     lap_info, ref = build_laps(t, v, dist, sessions, [b for b in beacons if 0 < b < T], stops,
                                [x for x in time_resets(ch) if 0 < x <= T + 0.5])
+    if _single_lap_export(v, dist, stops, beacons, lap_info, ref):
+        # Export genau einer fliegenden Runde (z. B. Referenz-Hotlap ohne .ldx): ganze Aufnahme = eine gültige Runde
+        lap_info = [dict(session=0, k=1, start=0.0, end=T, dur=T, dist=float(dist[-1]), stopped=False,
+                         starts_at_line=True, ends_at_line=True, kind=KIND_TIMED, lap=0, valid=True, num=1)]
+        sessions, ref = [(0.0, T)], float(dist[-1])
 
     lap = np.full(n, -1, dtype=int)          # -1 = zwischen Sessions (Garage/Wartezeit)
     sess = np.full(n, -1, dtype=int)

@@ -40,6 +40,9 @@ class Physics(ctypes.Structure):
         ("tyreContactPoint", F3 * 4), ("tyreContactNormal", F3 * 4),
         ("tyreContactHeading", F3 * 4),
         ("brakeBias", c_float), ("localVelocity", F3),
+        ("P2PActivations", c_int), ("P2PStatus", c_int), ("currentMaxRpm", c_int),
+        ("mz", F4), ("fx", F4), ("fy", F4), ("slipRatio", F4), ("slipAngle", F4),
+        ("tcinAction", c_int), ("absInAction", c_int), ("suspensionDamage", F4), ("tyreTemp", F4),
     ]
 
 
@@ -55,6 +58,9 @@ class Graphics(ctypes.Structure):
         ("isInPit", c_int), ("currentSectorIndex", c_int), ("lastSectorTime", c_int),
         ("numberOfLaps", c_int), ("tyreCompound", c_uint16 * 33),
         ("replayTimeMultiplier", c_float), ("normalizedCarPosition", c_float),
+        ("activeCars", c_int), ("carCoordinates", F3 * 60), ("carID", c_int * 60), ("playerCarID", c_int),
+        ("penaltyTime", c_float), ("flag", c_int), ("penalty", c_int), ("idealLineOn", c_int),
+        ("isInPitLane", c_int),
     ]
 
 
@@ -84,6 +90,13 @@ def check_layout() -> list[str]:
         problems.append(f"Graphics.normalizedCarPosition offset {Graphics.normalizedCarPosition.offset} != 248")
     if Static.carModel.offset != 68 or Static.track.offset != 134:
         problems.append("Static.carModel/track Offsets stimmen nicht")
+    if Graphics.isInPitLane.offset != 1236:
+        problems.append(f"Graphics.isInPitLane offset {Graphics.isInPitLane.offset} != 1236")
+    if Physics.brakeBias.offset != 564:
+        problems.append(f"Physics.brakeBias offset {Physics.brakeBias.offset} != 564")
+    for st in (Physics, Graphics, Static):
+        if ctypes.sizeof(st) > 4096:
+            problems.append(f"{st.__name__} größer als eine Speicherseite")
     return problems
 
 
@@ -105,7 +118,8 @@ class ACCReader:
         if not h:
             self.close()
             raise RuntimeError(f"Shared Memory '{name}' nicht gefunden – läuft ACC?")
-        ptr = k.MapViewOfFile(h, FILE_MAP_READ, 0, 0, size)
+        # Länge 0 = ganze Fläche (mind. eine 4-KB-Seite) -> auch ältere ACC-Versionen mit kürzerem Struct gehen
+        ptr = k.MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0)
         if not ptr:
             k.CloseHandle(h)
             self.close()
